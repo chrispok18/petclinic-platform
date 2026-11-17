@@ -2,6 +2,8 @@
 .terraform/
 *.tfstate
 *.tfstate.backup
+*.tfstate.*
+.terraform.tfstate.lock.info
 *.tfplan
 plan.out
 crash.log
@@ -9,6 +11,9 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+# Partial backend configs (may contain account-specific bucket names)
+*.backend.hcl
+backend.hcl
 # Do NOT ignore .terraform.lock.hcl — it should be committed for reproducible builds
 
 # Sensitive files — NEVER commit
