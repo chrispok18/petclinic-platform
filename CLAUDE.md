@@ -79,7 +79,8 @@ docs/                                # Architecture docs, runbooks, ADRs
 | K8s namespace | petclinic-dev | petclinic-prod |
 | State key | petclinic/dev/terraform.tfstate | petclinic/prod/terraform.tfstate |
 | RDS instance | db.t4g.micro, single-AZ (free tier) | db.t4g.micro, single-AZ (free tier) |
-| EKS nodes | 2x t4g.small ARM (Graviton free trial) | 2x t4g.small ARM (Graviton free trial) |
+| EKS version | 1.37, upgrade policy STANDARD (never extended support) | 1.29 (re-check before prod build) |
+| EKS nodes | t4g.small ARM, AL2023_ARM_64_STANDARD, min 2 / max 8 / desired 5; launch template attaches EKS primary SG + node SG (Graviton free trial) | 2x t4g.small ARM (Graviton free trial) |
 | Deploy mode | ArgoCD auto-sync | ArgoCD manual sync |
 | Replicas | 1 per service | 2+ per service, HPA |
 
