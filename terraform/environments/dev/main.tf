@@ -114,10 +114,11 @@ module "rds" {
 
 data "aws_iam_policy_document" "eso" {
   statement {
-    sid       = "ReadPetclinicSecrets"
-    effect    = "Allow"
-    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = ["arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.project}/*"]
+    sid     = "ReadPetclinicDevSecrets"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    # Scoped to this environment only: dev ESO cannot read petclinic/prod/* secrets.
+    resources = ["arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.project}/${var.environment}/*"]
   }
 }
 

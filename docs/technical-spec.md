@@ -187,11 +187,15 @@ Four security groups per environment. Security groups are the **primary access c
 | Parameter | Dev | Prod |
 |-----------|-----|------|
 | Cluster Name | `petclinic-dev` | `petclinic-prod` |
-| Kubernetes Version | `1.29` | `1.29` |
-| API Server Endpoint | Public | Public |
+| Kubernetes Version | `1.37` | `1.29` (re-check before prod build — 1.29 is now extended support) |
+| Upgrade Policy (`upgrade_policy.support_type`) | `STANDARD` | — |
+| API Server Endpoint | Public (+ private endpoint enabled) | Public |
 | Authentication Mode | `API_AND_CONFIG_MAP` | `API_AND_CONFIG_MAP` |
 | Cluster Logging | `api`, `audit`, `authenticator` | `api`, `audit`, `authenticator` |
 | Subnets | Public (AZ a + b) | Public (AZ a + b) |
+| Cluster Creator Access | Access entry via `bootstrap_cluster_creator_admin_permissions = true` (cluster-admin) | — |
+
+> **Version choice (dev):** Use the newest version in **standard** support (`aws eks describe-cluster-versions --region eu-central-1`). Versions in extended support cost $0.60/hr instead of $0.10/hr. In Nov 2026, 1.34–1.37 were in standard support; 1.37's standard support ends 2027-12-01. `upgrade_policy { support_type = "STANDARD" }` makes EKS auto-upgrade at end of standard support instead of silently moving into extended support.
 
 ### Cluster IAM Role
 
@@ -212,10 +216,36 @@ Created from EKS cluster identity issuer URL. Required for IRSA (IAM Roles for S
 | Architecture | ARM64 (Graviton) | ARM64 (Graviton) |
 | Capacity Type | `ON_DEMAND` (free trial until Dec 2026) | `ON_DEMAND` (free trial until Dec 2026) |
 | Min Size | 2 | 2 |
-| Max Size | 4 | 4 |
-| Desired Size | 2 | 2 |
-| Disk Size | 20 GB | 20 GB |
-| AMI Type | `AL2_ARM_64` | `AL2_ARM_64` |
+| Max Size | 8 | 4 |
+| Desired Size | 5 (variable `eks_node_desired_size`) | 2 |
+| Disk Size | 20 GB (gp3, encrypted, set in launch template) | 20 GB |
+| AMI Type | `AL2023_ARM_64_STANDARD` (AL2 is not published for new K8s versions) | `AL2_ARM_64` |
+| Launch Template | Yes — attaches both SGs (see below), encrypted root volume, IMDSv2 with hop limit 1 | — |
+
+#### Node Security Groups (Launch Template)
+
+A managed node group **without** a launch template gets only the EKS-created cluster primary SG (`eks-cluster-sg-petclinic-{env}-*`); the custom EKS Node SG from the VPC module would never be attached, so the RDS rule (3306 from Node SG) and the ALB rule (8080 to Node SG) would match nothing.
+
+Dev therefore uses a launch template with `vpc_security_group_ids` set to **both**:
+
+| SG | Why |
+|----|-----|
+| EKS cluster primary SG (created by EKS) | Control plane ↔ node traffic. EKS stops adding it automatically once a launch template sets SGs, so it must be listed explicitly. |
+| EKS Node SG (`petclinic-{env}-eks-node-sg`) | Referenced by the RDS SG (3306) and ALB SG (8080) rules. |
+
+The VPC CNI assigns pod IPs from secondary ENIs that inherit the primary ENI's SGs, so **pods carry both SGs too** — pods → RDS:3306 and ALB → pod:8080 (`target-type: ip`) work with the existing rules.
+
+IMDS hop limit 1 means pods cannot use the node IAM role (workloads use IRSA). Consequence: the AWS Load Balancer Controller Helm values must set `vpcId` and `region` explicitly.
+
+#### Dev Capacity (5 × t4g.small)
+
+| Constraint | Per node | 5 nodes | Needed (dev) |
+|------------|----------|---------|--------------|
+| Max pods (3 ENIs × (4 IPs − 1) + 2) | 11 | 55 | — |
+| Slots after DaemonSets (aws-node, kube-proxy, node-exporter) | 8 | 40 | ~28 (8 apps, 2 CoreDNS, ~7 ArgoCD, 3 ESO, 2 LB Controller, ~5 Prometheus stack, 1 Zipkin) |
+| Allocatable memory (approx.) | ~1.45 GiB | ~7.2 GiB | ~5.7 GiB working set (~80%) |
+
+Memory is the binding constraint: 4 nodes do not fit; raise `eks_node_desired_size` to 6 if pods are OOM-killed or Pending.
 
 > **Cost note:** t4g.small instances (2 vCPU, 2 GiB) are eligible for the AWS Graviton free trial (750 hrs/month until Dec 2026). Both dev and prod use identical sizing — this is a cost optimization for a learning project. In production, you would use larger instances (e.g., m7g.xlarge). Students should understand this trade-off.
 
@@ -234,9 +264,19 @@ Created from EKS cluster identity issuer URL. Required for IRSA (IAM Roles for S
 | `coredns` | Cluster DNS | No |
 | `kube-proxy` | Network proxy | No |
 | `vpc-cni` | Pod networking | No |
-| `aws-ebs-csi-driver` | EBS PersistentVolumes (Prometheus, Grafana) | Yes (`AmazonEBSCSIDriverPolicy`) |
+| `aws-ebs-csi-driver` | EBS PersistentVolumes (Prometheus, Grafana) — **prod only; not installed in dev** | Yes (`AmazonEBSCSIDriverPolicy`) |
 
 Add-on versions pinned (not `latest`). Resolve conflicts strategy: `OVERWRITE` for initial setup.
+
+**Dev pinned versions (K8s 1.37, AWS default versions as of Nov 2026):**
+
+| Add-on | Version |
+|--------|---------|
+| `coredns` | `v1.14.7-eksbuild.35` |
+| `kube-proxy` | `v1.37.0-eksbuild.39` |
+| `vpc-cni` | `v1.22.4-eksbuild.14` |
+
+**Dev skips `aws-ebs-csi-driver`:** Prometheus, Grafana and Loki run without PersistentVolumes (`emptyDir`), so `terraform destroy` leaves no orphaned EBS volumes behind. Metrics/logs are lost when those pods restart — acceptable for dev.
 
 ---
 
@@ -397,7 +437,9 @@ AWS Secrets Manager is purpose-built for storing secrets (database credentials, 
 | Secret Name | Type | Content | Created By |
 |-------------|------|---------|------------|
 | `petclinic/{env}/rds-credentials` | JSON (`{"username":"...","password":"..."}`) | RDS master credentials | RDS module (PETPLAT-23) |
-| `petclinic/{env}/openai-api-key` | Plaintext | OpenAI API key value | Secrets module (PETPLAT-33) |
+| `petclinic/{env}/openai-api-key` | Plaintext | OpenAI API key value | Secrets module (PETPLAT-33) — **not created in dev** |
+
+> **Dev:** only `petclinic/dev/rds-credentials` exists. The secrets module and OpenAI secret are skipped; genai-service runs with its built-in default key `demo`. The RDS secret uses `recovery_window_in_days = 0` in dev so the name is reusable immediately after destroy. Its JSON also carries `host`, `port`, `dbname` and `engine` alongside `username`/`password`.
 
 > **Note:** Secret names use forward-slash convention (`petclinic/{env}/...`). All secrets are encrypted with the default AWS KMS key (`aws/secretsmanager`).
 
@@ -449,7 +491,7 @@ spec:
 | `data[1].remoteRef.key` | `petclinic/{env}/rds-credentials` |
 | `data[1].remoteRef.property` | `password` |
 
-**OpenAI API Key** (`k8s/base/external-secrets/openai-api-key.yaml`):
+**OpenAI API Key** (`k8s/base/external-secrets/openai-api-key.yaml`) — **prod only; not deployed in dev** (no source secret exists):
 
 | Field | Value |
 |-------|-------|
@@ -637,7 +679,7 @@ API Gateway gets higher CPU (200m/1000m) because it handles all incoming traffic
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `OPENAI_API_KEY` | From secret | K8s Secret (ESO) |
+| `OPENAI_API_KEY` | From secret (prod) / **not set in dev** → defaults to `demo` | K8s Secret (ESO), prod only |
 
 ### Init Containers (Startup Order Enforcement)
 
@@ -842,7 +884,7 @@ git push
 | Scrape Interval | 15s | 15s |
 | Evaluation Interval | 15s | 15s |
 | Retention | 7 days | 15 days |
-| Storage | PersistentVolume (EBS, 10Gi) | PersistentVolume (EBS, 50Gi) |
+| Storage | `emptyDir` (no PV — ebs-csi not installed in dev) | PersistentVolume (EBS, 50Gi) |
 
 #### Scrape Targets
 
@@ -863,7 +905,7 @@ git push
 |-----------|-------|
 | Namespace | `monitoring` |
 | Datasources | Prometheus (auto-configured), Loki (auto-configured) |
-| Storage | PersistentVolume (EBS, 5Gi) |
+| Storage | Dev: `emptyDir` (no PV); Prod: PersistentVolume (EBS, 5Gi) |
 | Admin Credentials | K8s Secret |
 | Dashboards | Provisioned via ConfigMap |
 
@@ -910,7 +952,7 @@ git push
 | Namespace | `monitoring` | `monitoring` |
 | Port | 3100 | 3100 |
 | Image | `grafana/loki` | `grafana/loki` |
-| Storage | PersistentVolume (EBS, 10Gi) | PersistentVolume (EBS, 50Gi) |
+| Storage | `emptyDir` (no PV — ebs-csi not installed in dev) | PersistentVolume (EBS, 50Gi) |
 | Log Retention | 7 days | 30 days |
 
 Loki receives logs from FluentBit and exposes them as a Grafana datasource. Log-based alert rules are defined as Loki alerting rules and routed through Alertmanager — same alert pipeline as Prometheus.
@@ -939,9 +981,9 @@ Five IAM Roles for Service Accounts, each with OIDC trust policy scoped to a spe
 
 | Role Name Pattern | K8s ServiceAccount | Namespace | IAM Policy | Used By |
 |-------------------|--------------------|-----------|------------|---------|
-| `petclinic-{env}-eso-role` | `external-secrets-sa` | `external-secrets` | `secretsmanager:GetSecretValue`, `secretsmanager:DescribeSecret` on `arn:aws:secretsmanager:eu-central-1:{account}:secret:petclinic/*` | ESO |
+| `petclinic-{env}-eso-role` | `external-secrets-sa` | `external-secrets` | `secretsmanager:GetSecretValue`, `secretsmanager:DescribeSecret` on `arn:aws:secretsmanager:eu-central-1:{account}:secret:petclinic/{env}/*` (environment-scoped: dev cannot read prod secrets) | ESO |
 | `petclinic-{env}-lb-controller-role` | `aws-load-balancer-controller` | `kube-system` | AWS Load Balancer Controller IAM policy (managed) | ALB Controller |
-| `petclinic-{env}-ebs-csi-role` | `ebs-csi-controller-sa` | `kube-system` | `AmazonEBSCSIDriverPolicy` (AWS managed) | EBS CSI Driver |
+| `petclinic-{env}-ebs-csi-role` | `ebs-csi-controller-sa` | `kube-system` | `AmazonEBSCSIDriverPolicy` (AWS managed) | EBS CSI Driver — **prod only; not created in dev** |
 | `petclinic-{env}-argocd-role` | `argocd-server` | `argocd` | Minimal: only needed if ArgoCD accesses AWS resources directly (optional) | ArgoCD |
 | `petclinic-{env}-karpenter-role` | `karpenter` | `kube-system` | Karpenter controller policy: `ec2:*`, `iam:PassRole`, `ssm:GetParameter`, `pricing:GetProducts`, `sqs:*`, `eks:DescribeCluster` (scoped) | Karpenter |
 
@@ -1011,16 +1053,16 @@ This is a learning project. Instance choices maximize AWS free tier eligibility.
 | Resource | Dev (~) | Prod (~) | Free Tier |
 |----------|---------|----------|-----------|
 | EKS Control Plane | $73 | $73 | None — unavoidable cost |
-| EC2 Nodes (2x t4g.small) | $0 | $0 | Graviton free trial (750 hrs/mo until Dec 2026) |
+| EC2 Nodes (dev 5x / prod 2x t4g.small) | ~$56 | $0 | Graviton free trial (750 hrs/mo until Dec 2026) covers ~1 node; dev also pays ~$0.005/hr per node public IPv4 and gp3 root volumes |
 | RDS MySQL (db.t4g.micro) | $0 | $0 | RDS free tier (750 hrs/mo, 12 months) |
 | ALB | $0 | $0 | Free tier (750 hrs/mo, 12 months) |
 | S3 + DynamoDB (state) | $1 | $1 | Mostly free tier |
 | ECR Storage | ~$1 | ~$1 | 500 MB free, then $0.10/GB/month |
-| EBS (PVs — Prometheus, Grafana, Loki) | $2 | $2 | 30 GB gp2 free (12 months) |
+| EBS (PVs — Prometheus, Grafana, Loki) | $0 (no PVs in dev) | $2 | 30 GB gp2 free (12 months) |
 | Route 53 | $1 | $1 | $0.50/zone + queries |
 | Secrets Manager | $1 | $1 | $0.40/secret/month (~3 secrets) |
 | Data Transfer | $1 | $1 | 100 GB/mo free |
-| **Total** | **~$80/mo** | **~$80/mo** | EKS control plane is the main cost |
+| **Total** | **~$175–205/mo** (24/7, 5 nodes) | **~$80/mo** | EKS control plane is the main cost; dev ≈ $0.24–0.28/hr incl. CloudWatch logs — destroy between sessions |
 
 > **Students should `terraform destroy` after each session** to minimize EKS control plane charges. At $0.10/hr, running EKS for 10 hours/week = ~$17/month. Target: **entire course under $50 AWS spend.**
 
@@ -1124,27 +1166,62 @@ No NAT Gateway cost ($0 saved vs ~$35-65/mo with NAT).
 |---------------|------|-------------|---------|
 | `project` | string | Project name | `"petclinic"` |
 | `environment` | string | Environment | — |
-| `cluster_version` | string | Kubernetes version | `"1.29"` |
+| `cluster_name` | string | EKS cluster name (`petclinic-{env}`) | — |
+| `kubernetes_version` | string | Kubernetes version (dev: `"1.37"`) | — |
 | `subnet_ids` | list(string) | Subnet IDs for cluster | — |
-| `cluster_sg_id` | string | Cluster security group ID | — |
-| `node_sg_id` | string | Node security group ID | — |
+| `cluster_security_group_id` | string | Custom cluster SG, added to control-plane ENIs | — |
+| `node_security_group_id` | string | Custom node SG, attached to nodes via launch template | — |
+| `public_access_cidrs` | list(string) | CIDRs allowed to the public API endpoint | `["0.0.0.0/0"]` |
+| `cluster_log_types` | list(string) | Control-plane log types | `["api", "audit", "authenticator"]` |
+| `cluster_log_retention_days` | number | CloudWatch log retention | `7` |
 | `node_instance_types` | list(string) | Instance types for nodes | `["t4g.small"]` |
-| `node_ami_type` | string | AMI type for nodes | `"AL2_ARM_64"` |
+| `node_ami_type` | string | AMI type for nodes | `"AL2023_ARM_64_STANDARD"` |
 | `node_min_size` | number | Min node count | `2` |
-| `node_max_size` | number | Max node count | `4` |
-| `node_desired_size` | number | Desired node count | `2` |
-| `node_disk_size` | number | Disk size in GB | `20` |
+| `node_max_size` | number | Max node count | `8` |
+| `node_desired_size` | number | Desired node count | `5` |
+| `node_disk_size` | number | Root volume size in GB | `20` |
+| `addon_versions` | map(string) | Managed add-on name => pinned version | — |
 | `tags` | map(string) | Additional tags | `{}` |
 
 | Output | Type | Description |
 |--------|------|-------------|
 | `cluster_name` | string | EKS cluster name |
+| `cluster_arn` | string | EKS cluster ARN |
 | `cluster_endpoint` | string | EKS API endpoint |
-| `cluster_ca_certificate` | string | Cluster CA certificate (base64) |
+| `cluster_version` | string | Kubernetes version |
+| `cluster_certificate_authority_data` | string | Cluster CA certificate (base64) |
+| `cluster_primary_security_group_id` | string | EKS-created primary SG (on control plane and nodes) |
 | `oidc_provider_arn` | string | OIDC provider ARN |
-| `oidc_provider_url` | string | OIDC provider URL |
+| `oidc_provider_url` | string | OIDC issuer without `https://` |
 | `node_group_name` | string | Managed node group name |
 | `node_role_arn` | string | Node IAM role ARN |
+| `addon_versions` | map(string) | Installed add-on versions |
+
+Dev root output `eks_update_kubeconfig_command`: `aws eks update-kubeconfig --region eu-central-1 --name petclinic-dev`.
+
+### Module: `irsa-role`
+
+**Path:** `terraform/modules/irsa-role/`
+
+Generic IRSA role: trust scoped to one `namespace:serviceaccount` with `aud = sts.amazonaws.com`, plus one customer-managed policy. Dev instantiates it twice: `petclinic-dev-eso-role` and `petclinic-dev-lb-controller-role` (official AWS Load Balancer Controller v3.6.3 policy, stored at `terraform/policies/aws-load-balancer-controller-iam-policy.json`).
+
+| Input Variable | Type | Description | Default |
+|---------------|------|-------------|---------|
+| `role_name` | string | IAM role name | — |
+| `oidc_provider_arn` | string | EKS OIDC provider ARN | — |
+| `oidc_provider_url` | string | OIDC issuer without `https://` | — |
+| `namespace` | string | ServiceAccount namespace | — |
+| `service_account` | string | ServiceAccount name | — |
+| `policy_json` | string | IAM policy document | — |
+| `tags` | map(string) | Additional tags | `{}` |
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `role_arn` | string | Role ARN (ServiceAccount annotation) |
+| `role_name` | string | Role name |
+| `policy_arn` | string | Attached policy ARN |
+
+Dev root outputs: `external_secrets_role_arn`, `lb_controller_role_arn`.
 
 ### Module: `ecr`
 
@@ -1229,6 +1306,8 @@ Uses `aws_secretsmanager_secret` and `aws_secretsmanager_secret_version` resourc
 | `openai_secret_arn` | string | Secrets Manager ARN for OpenAI API key |
 
 Note: RDS credentials are NOT managed by this module — they are in the `rds` module (PETPLAT-23).
+
+**Dev:** this module is not instantiated (no OpenAI secret; genai-service uses the `demo` key).
 
 ### Module: `karpenter`
 
