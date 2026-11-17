@@ -91,6 +91,8 @@ data "aws_iam_policy_document" "ecr_push" {
       "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload",
       "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
     ]
     resources = var.ecr_repository_arns
   }

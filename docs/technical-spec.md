@@ -781,7 +781,7 @@ GitHub Actions handles **CI only** (build, test, push images). **ArgoCD handles 
 | Audience | `sts.amazonaws.com` |
 | Subject Filter | `repo:{org}/{repo}:ref:refs/heads/main` |
 | IAM Role | `petclinic-github-actions-role` |
-| Permissions | ECR push only (`ecr:GetAuthorizationToken`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, layer upload actions) — no S3, no DynamoDB (CI workflows do not run Terraform) |
+| Permissions | ECR push only (`ecr:GetAuthorizationToken`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, layer upload actions) — no S3, no DynamoDB (CI workflows do not run Terraform) |
 
 ### GitHub Secrets
 
