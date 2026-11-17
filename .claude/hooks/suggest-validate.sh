@@ -22,26 +22,26 @@ fi
 # Check if the file is a Terraform file
 if echo "$FILE_PATH" | grep -qE '\.tf$'; then
   TF_DIR=$(dirname "$FILE_PATH")
-  echo "Tip: You edited a Terraform file. Run 'terraform validate' in ${TF_DIR}/ to check for errors."
-  echo "     Also run 'terraform fmt -check' to verify formatting."
+  echo "Tip: You edited a Terraform file. Run 'terraform validate' in ${TF_DIR}/ to check for errors." >&2
+  echo "     Also run 'terraform fmt -check' to verify formatting." >&2
 fi
 
 # Check if the file is a Kubernetes YAML file
 if echo "$FILE_PATH" | grep -qE 'k8s/.*\.(yaml|yml)$'; then
-  echo "Tip: You edited a K8s manifest. Run 'kubectl apply --dry-run=client -f ${FILE_PATH}' to validate."
+  echo "Tip: You edited a K8s manifest. Run 'kubectl apply --dry-run=client -f ${FILE_PATH}' to validate." >&2
 fi
 
 # Check if the file is a Helm chart template or values file
 if echo "$FILE_PATH" | grep -qE '(helm/|helm-values/).*\.(yaml|yml|tpl)$'; then
-  echo "Tip: You edited a Helm file. Validate with:"
-  echo "     helm template petclinic helm/petclinic-service/ -f helm-values/{service}.yaml -f helm-values/{env}.yaml"
-  echo "     helm lint helm/petclinic-service/ -f helm-values/{service}.yaml -f helm-values/{env}.yaml"
+  echo "Tip: You edited a Helm file. Validate with:" >&2
+  echo "     helm template petclinic helm/petclinic-service/ -f helm-values/{service}.yaml -f helm-values/{env}.yaml" >&2
+  echo "     helm lint helm/petclinic-service/ -f helm-values/{service}.yaml -f helm-values/{env}.yaml" >&2
 fi
 
 # Check if the file is a GitHub Actions workflow file
 if echo "$FILE_PATH" | grep -qE '\.github/workflows/.*\.(yaml|yml)$'; then
-  echo "Tip: You edited a GitHub Actions workflow. Review with the pipeline-reviewer agent before committing."
-  echo "     Validate locally with: act --dryrun (if installed) or push to a feature branch to test."
+  echo "Tip: You edited a GitHub Actions workflow. Review with the pipeline-reviewer agent before committing." >&2
+  echo "     Validate locally with: act --dryrun (if installed) or push to a feature branch to test." >&2
 fi
 
 # Always exit 0 — this hook is informational only, never blocks

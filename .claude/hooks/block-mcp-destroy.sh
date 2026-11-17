@@ -20,10 +20,10 @@ fi
 
 # Block destroy command
 if [ "$COMMAND" = "destroy" ]; then
-  echo "BLOCKED: 'destroy' via MCP Terraform tool is not allowed."
-  echo ""
-  echo "Destroying infrastructure must be done manually with explicit human oversight."
-  echo "Run 'terraform destroy' directly in your terminal (not via Claude Code)."
+  echo "BLOCKED: 'destroy' via MCP Terraform tool is not allowed." >&2
+  echo "" >&2
+  echo "Destroying infrastructure must be done manually with explicit human oversight." >&2
+  echo "Run 'terraform destroy' directly in your terminal (not via Claude Code)." >&2
   exit 2
 fi
 

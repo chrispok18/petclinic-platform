@@ -25,11 +25,11 @@ if echo "$COMMAND" | grep -qE 'rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+|--recursive|--fo
     # Check if the rm command targets a protected directory
     # Match: rm -rf terraform, rm -rf ./terraform, rm -rf terraform/, etc.
     if echo "$COMMAND" | grep -qE "rm\s+.*(\s|/|^)\.?/?${dir}(/|\s|$)"; then
-      echo "BLOCKED: Cannot 'rm -rf' the '${dir}/' directory."
-      echo ""
-      echo "This directory contains critical infrastructure code."
-      echo "If you need to remove specific files, delete them individually."
-      echo "If you need to reset the directory, use 'git checkout -- ${dir}/'."
+      echo "BLOCKED: Cannot 'rm -rf' the '${dir}/' directory." >&2
+      echo "" >&2
+      echo "This directory contains critical infrastructure code." >&2
+      echo "If you need to remove specific files, delete them individually." >&2
+      echo "If you need to reset the directory, use 'git checkout -- ${dir}/'." >&2
       exit 2
     fi
   done

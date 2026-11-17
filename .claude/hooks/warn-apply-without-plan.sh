@@ -26,27 +26,27 @@ if echo "$COMMAND" | grep -qE '(terraform|terragrunt)\s+apply'; then
 
   # Check for -auto-approve flag (extra dangerous without a plan)
   if echo "$COMMAND" | grep -qE '\-auto-approve'; then
-    echo "WARNING: 'terraform apply -auto-approve' without a saved plan is risky."
-    echo ""
-    echo "Recommended safe workflow:"
-    echo "  1. terraform plan -out plan.out"
-    echo "  2. Review the plan output"
-    echo "  3. terraform apply plan.out"
-    echo ""
-    echo "Using -auto-approve skips the confirmation prompt AND uses no saved plan."
+    echo "WARNING: 'terraform apply -auto-approve' without a saved plan is risky." >&2
+    echo "" >&2
+    echo "Recommended safe workflow:" >&2
+    echo "  1. terraform plan -out plan.out" >&2
+    echo "  2. Review the plan output" >&2
+    echo "  3. terraform apply plan.out" >&2
+    echo "" >&2
+    echo "Using -auto-approve skips the confirmation prompt AND uses no saved plan." >&2
     exit 1
   fi
 
   # No plan file — warn and ask for confirmation
-  echo "WARNING: Running 'terraform apply' without a saved plan file."
-  echo ""
-  echo "Recommended workflow:"
-  echo "  1. terraform plan -out plan.out"
-  echo "  2. Review the plan"
-  echo "  3. terraform apply plan.out"
-  echo ""
-  echo "Proceeding without a plan means Terraform will re-plan at apply time,"
-  echo "and the changes may differ from what you reviewed."
+  echo "WARNING: Running 'terraform apply' without a saved plan file." >&2
+  echo "" >&2
+  echo "Recommended workflow:" >&2
+  echo "  1. terraform plan -out plan.out" >&2
+  echo "  2. Review the plan" >&2
+  echo "  3. terraform apply plan.out" >&2
+  echo "" >&2
+  echo "Proceeding without a plan means Terraform will re-plan at apply time," >&2
+  echo "and the changes may differ from what you reviewed." >&2
   exit 1
 fi
 
