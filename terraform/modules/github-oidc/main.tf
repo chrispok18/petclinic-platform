@@ -14,7 +14,15 @@ locals {
     : data.aws_iam_openid_connect_provider.github[0].arn
   )
 
-  subjects = [for ref in var.allowed_refs : "repo:${var.github_repository}:ref:${ref}"]
+  # GitHub can issue the sub claim in the plain form (repo:owner/name:ref:...) or, when the repo opts
+  # into immutable identifiers, as repo:owner@<owner_id>/name@<repo_id>:ref:... Accept both if given.
+  repository_forms = compact([var.github_repository, var.github_repository_immutable])
+
+  subjects = flatten([
+    for repo in local.repository_forms : [
+      for ref in var.allowed_refs : "repo:${repo}:ref:${ref}"
+    ]
+  ])
 }
 
 resource "aws_iam_openid_connect_provider" "github" {

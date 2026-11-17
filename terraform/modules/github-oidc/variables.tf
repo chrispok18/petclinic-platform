@@ -20,6 +20,17 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_immutable" {
+  description = "Optional immutable-ID form of the repository, as owner@<owner_id>/name@<repo_id>. When set, the trust policy accepts this sub form in addition to the plain owner/name form."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.github_repository_immutable == null || can(regex("^[A-Za-z0-9_.-]+@[0-9]+/[A-Za-z0-9_.-]+@[0-9]+$", coalesce(var.github_repository_immutable, "x@0/x@0")))
+    error_message = "github_repository_immutable must be in owner@<owner_id>/name@<repo_id> form."
+  }
+}
+
 variable "allowed_refs" {
   description = "Git refs allowed to assume the role (matched exactly in the OIDC sub claim)"
   type        = list(string)

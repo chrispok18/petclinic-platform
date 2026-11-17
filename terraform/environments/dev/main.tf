@@ -63,8 +63,11 @@ module "github_oidc" {
   create_oidc_provider = true
   role_name            = "petclinic-github-actions-role"
   github_repository    = local.github_repository
-  allowed_refs         = ["refs/heads/main"]
-  ecr_repository_arns  = values(module.ecr.repository_arns)
+  # The app repo's OIDC tokens now carry immutable IDs in sub (owner chrispok18=172830357,
+  # repo=1461392745); the trust policy accepts both that form and the plain one.
+  github_repository_immutable = "chrispok18@172830357/spring-petclinic-microservices@1461392745"
+  allowed_refs                = ["refs/heads/main"]
+  ecr_repository_arns         = values(module.ecr.repository_arns)
 
   tags = { Component = "ci" }
 }
