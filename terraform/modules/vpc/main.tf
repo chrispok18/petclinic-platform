@@ -160,6 +160,18 @@ resource "aws_vpc_security_group_ingress_rule" "nodes_nodeport_from_alb" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-nodes-in-nodeport-alb" })
 }
 
+# Pairs with the ALB 8080 egress rule: health checks and ip-mode targets (AWS LB Controller).
+resource "aws_vpc_security_group_ingress_rule" "nodes_8080_from_alb" {
+  security_group_id            = aws_security_group.eks_nodes.id
+  description                  = "Health checks and ip-mode targets from ALB"
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+  referenced_security_group_id = aws_security_group.alb.id
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-nodes-in-8080-alb" })
+}
+
 resource "aws_vpc_security_group_egress_rule" "nodes_all_out" {
   security_group_id = aws_security_group.eks_nodes.id
   description       = "All outbound"
