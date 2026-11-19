@@ -1,0 +1,123 @@
+# Defaults common to all services (technical-spec: Helm Charts > values.yaml Defaults).
+# Merge order (ArgoCD): this file < helm-values/<service>.yaml < helm-values/<env>.yaml
+
+# REQUIRED per service. Used for every resource name, the Service DNS name the other apps call
+# (config-server, discovery-server, customers-service, ...) and the ECR repository name.
+serviceName: ""
+
+# app.kubernetes.io/component: server | service | gateway | admin
+component: service
+
+replicaCount: 1
+
+image:
+  registry: ""                 # <ECR host>/petclinic-<env>, set ONCE in helm-values/<env>.yaml
+  name: ""                     # ECR image name, set per service (defaults to serviceName)
+  tag: ""                      # commit SHA, set per service (CI commits it); never "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080                   # overridden per service; container and Service use the same port
+
+# SPRING_PROFILES_ACTIVE. Replaces the image default (docker) and the app's own spring.profiles.active.
+springProfiles: docker
+
+# Non-secret settings rendered into the service ConfigMap (envFrom).
+# commonConfig is meant for helm-values/<env>.yaml, config for the service file.
+commonConfig: {}
+config: {}
+
+# Extra env vars on the main container (list of EnvVar objects).
+env: []
+
+# Secrets loaded whole with envFrom (e.g. rds-credentials created by External Secrets).
+envFromSecrets: []
+
+# Single secret-backed env vars: list of {name, secretName, key}.
+secrets: []
+
+# Wait-for init containers (startup order). Each entry: {name, url}; polled with wget until HTTP 2xx.
+waitFor: []
+
+initContainerImage: busybox:1.36
+initContainerResources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 50m
+    memory: 32Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# technical-spec: Health Probes. type: http (path required) | tcp.
+probes:
+  startup:
+    type: http
+    path: /actuator/health
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30       # up to 5 minutes for Spring Boot to start
+  readiness:
+    type: http
+    path: /actuator/health/readiness
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    type: http
+    path: /actuator/health/liveness
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+terminationGracePeriodSeconds: 30
+
+serviceAccount:
+  create: true
+  annotations: {}              # e.g. eks.amazonaws.com/role-arn for IRSA
+  automountToken: false        # the apps never call the Kubernetes API
+
+podAnnotations: {}
+nodeSelector:
+  kubernetes.io/arch: arm64    # images are linux/arm64 only
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault       # keeps the PSA "restricted" warn level quiet
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: false  # Spring Boot needs /tmp
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ALB Ingress (AWS Load Balancer Controller). Enabled only in helm-values/api-gateway.yaml.
+ingress:
+  enabled: false
+  className: alb
+  annotations: {}
+  path: /
+  pathType: Prefix

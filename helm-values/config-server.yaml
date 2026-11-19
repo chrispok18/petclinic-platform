@@ -1,0 +1,31 @@
+# config-server: 1st in startup order. Git-backed (spring-petclinic-microservices-config, branch main).
+serviceName: config-server
+component: server
+
+image:
+  name: config-server
+  tag: "32c63ef"   # commit SHA from the app repo CI (build-push.yml run #3)
+
+service:
+  port: 8888
+
+springProfiles: docker
+
+# No wait-for init containers: everything else waits for this service.
+waitFor: []
+
+# DEVIATION from the probe spec, forced by the app: spring-cloud-config-server only has
+# spring-boot-starter-actuator as an OPTIONAL dependency and the config-server pom does not add it,
+# so /actuator/health does not exist (404). Upstream docker-compose also health-checks "/" for this reason.
+# - startup/readiness: GET /application/default = "can serve config" (200 once the Git repo is cloned)
+# - liveness: TCP only, so a GitHub outage cannot trigger a restart loop
+probes:
+  startup:
+    type: http
+    path: /application/default
+  readiness:
+    type: http
+    path: /application/default
+    periodSeconds: 30
+  liveness:
+    type: tcp

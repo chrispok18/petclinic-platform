@@ -1,0 +1,11 @@
+{{ include "petclinic.name" . }} deployed to namespace {{ .Release.Namespace }}
+Image: {{ include "petclinic.image" . }}
+Profiles: {{ .Values.springProfiles }}
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "petclinic.name" . }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "petclinic.name" . }} -f
+{{- if .Values.ingress.enabled }}
+
+Public URL (ALB, HTTP):
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "petclinic.name" . }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+{{- end }}

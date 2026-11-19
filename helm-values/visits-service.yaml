@@ -1,0 +1,25 @@
+# visits-service: MySQL-backed (RDS). Datasource comes from the rds-credentials Secret (External Secrets,
+# k8s/base/external-secrets/rds-credentials.yaml): SPRING_DATASOURCE_URL/USERNAME/PASSWORD.
+serviceName: visits-service
+component: service
+
+image:
+  name: visits-service
+  tag: "32c63ef"   # commit SHA from the app repo CI (build-push.yml run #3)
+
+service:
+  port: 8082
+
+springProfiles: "docker,mysql"
+
+waitFor:
+  - name: config-server
+    url: http://config-server:8888/application/default   # config-server has no actuator (see config-server.yaml)
+  - name: discovery-server
+    url: http://discovery-server:8761/actuator/health
+  # visits.pet_id has a FK to customers' pets table: wait until customers-service has created its schema.
+  - name: customers-service
+    url: http://customers-service:8081/actuator/health
+
+envFromSecrets:
+  - rds-credentials

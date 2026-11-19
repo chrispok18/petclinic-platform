@@ -1,0 +1,19 @@
+# genai-service: Spring AI chatbot. Dev runs without an OpenAI secret: OPENAI_API_KEY is unset and the
+# app falls back to its built-in "demo" key (chat calls fail, the service itself starts and registers).
+serviceName: genai-service
+component: service
+
+image:
+  name: genai-service
+  tag: "32c63ef"   # commit SHA from the app repo CI (build-push.yml run #3)
+
+service:
+  port: 8084
+
+springProfiles: docker
+
+waitFor:
+  - name: config-server
+    url: http://config-server:8888/application/default   # config-server has no actuator (see config-server.yaml)
+  - name: discovery-server
+    url: http://discovery-server:8761/actuator/health

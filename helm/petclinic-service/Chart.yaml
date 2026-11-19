@@ -1,0 +1,7 @@
+apiVersion: v2
+name: petclinic-service
+description: Generic chart shared by all 8 Spring Petclinic microservices (per-service + per-env values in helm-values/)
+type: application
+version: 0.1.0
+appVersion: "4.0.1"
+kubeVersion: ">=1.29.0-0"

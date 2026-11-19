@@ -1,0 +1,18 @@
+# admin-server: Spring Boot Admin dashboard (discovers the other services through Eureka).
+serviceName: admin-server
+component: admin
+
+image:
+  name: admin-server
+  tag: "32c63ef"   # commit SHA from the app repo CI (build-push.yml run #3)
+
+service:
+  port: 9090
+
+springProfiles: docker
+
+waitFor:
+  - name: config-server
+    url: http://config-server:8888/application/default   # config-server has no actuator (see config-server.yaml)
+  - name: discovery-server
+    url: http://discovery-server:8761/actuator/health

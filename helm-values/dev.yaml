@@ -1,0 +1,28 @@
+# Dev environment overrides (technical-spec: Kubernetes Overlays > Dev, Helm Values Structure).
+# Merged last by ArgoCD: chart values.yaml < helm-values/<service>.yaml < this file.
+
+# The ONLY place the ECR registry (and so the AWS account ID) appears in the repo.
+image:
+  registry: 310971188778.dkr.ecr.eu-central-1.amazonaws.com/petclinic-dev
+
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+# Rendered into every service ConfigMap.
+commonConfig:
+  CONFIG_SERVER_URL: http://config-server:8888
+
+# Merged into the api-gateway Ingress (ingress.enabled is false for every other service).
+ingress:
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: petclinic-dev-alb
+    # Terraform-managed ALB SG (Name tag; the controller resolves names or IDs). Its rules already allow
+    # 80 from the internet and 8080 to the node SG, which every pod carries via the launch template.
+    alb.ingress.kubernetes.io/security-groups: petclinic-dev-alb-sg
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "false"
+    alb.ingress.kubernetes.io/tags: Project=petclinic,Environment=dev,ManagedBy=aws-load-balancer-controller

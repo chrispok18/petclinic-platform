@@ -1,0 +1,29 @@
+# Root "app of apps" for dev: syncs the 8 Applications in k8s/argocd/applications/dev/ in sync-wave order
+# (config-server 0 -> discovery-server 1 -> api-gateway/customers/vets/genai/admin 2 -> visits 3).
+# Without a parent app, sync waves on separate Applications have no effect.
+#   kubectl apply -f k8s/argocd/root/petclinic-dev.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: petclinic-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: petclinic-dev
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: kubectl
+    environment: dev
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chrispok18/petclinic-platform.git
+    targetRevision: main
+    path: k8s/argocd/applications/dev
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

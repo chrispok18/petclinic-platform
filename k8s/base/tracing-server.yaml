@@ -1,0 +1,26 @@
+# Tracing hostname alias.
+#
+# The shared config (spring-petclinic-microservices-config/application.yml, docker profile) sends every
+# service's traces to:
+#     management.tracing.export.zipkin.endpoint: http://tracing-server:9411/api/v2/spans
+# "tracing-server" is a short name, so it resolves in the CALLER's namespace (petclinic-dev). The spec runs
+# Zipkin in the "tracing" namespace; without this alias the lookup fails and no trace ever arrives.
+#
+# Contract for the Zipkin install: Service "zipkin" in namespace "tracing", port 9411.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tracing-server
+  namespace: petclinic-dev
+  labels:
+    app.kubernetes.io/name: tracing-server
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: infrastructure
+spec:
+  type: ExternalName
+  externalName: zipkin.tracing.svc.cluster.local
+  ports:
+    - name: http
+      port: 9411
+      targetPort: 9411

@@ -1,0 +1,41 @@
+# api-gateway: Spring Cloud Gateway + AngularJS frontend. The only public service (ALB Ingress).
+serviceName: api-gateway
+component: gateway
+
+image:
+  name: api-gateway
+  tag: "32c63ef"   # commit SHA from the app repo CI (build-push.yml run #3)
+
+service:
+  port: 8080
+
+springProfiles: docker
+
+waitFor:
+  - name: config-server
+    url: http://config-server:8888/application/default   # config-server has no actuator (see config-server.yaml)
+  - name: discovery-server
+    url: http://discovery-server:8761/actuator/health
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# technical-spec: DNS and Ingress. HTTP only (no ACM/Route 53 in dev).
+# Env-specific annotations (ALB name, security group, tags) live in helm-values/<env>.yaml.
+ingress:
+  enabled: true
+  className: alb
+  path: /
+  pathType: Prefix
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+    alb.ingress.kubernetes.io/success-codes: "200"
