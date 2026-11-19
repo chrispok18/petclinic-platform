@@ -134,3 +134,85 @@ Region: eu-central-1 · Environment: dev only
 ## Next (Day 2, $0)
 - Helm chart + 8 values files (tag 32c63ef), ArgoCD Applications, ESO / LB Controller / observability install files.
 - Run the security-auditor agent and fix one finding (A3).
+
+---
+
+## Day 2 — Thu 19 Nov 2026
+
+### 8. Helm chart, External Secrets, ArgoCD (commit 6cadf1e)
+- Generic Helm chart (8 services + dev values), ESO ClusterSecretStore + ExternalSecret, ArgoCD root app + 8 Applications with sync waves. helm lint and helm template pass for all 8. My account ID appears only in helm-values/dev.yaml.
+- RDS endpoint kept out of Git: the ExternalSecret builds SPRING_DATASOURCE_URL/USERNAME/PASSWORD from the Secrets Manager JSON (sslMode=REQUIRED). DB services load it with envFrom.
+- Claude found 4 real problems before the build:
+  1. Zipkin hostname mismatch: the app sends traces to tracing-server:9411, but the spec puts Zipkin in namespace tracing. Fix: alias Service tracing-server -> zipkin.tracing.
+  2. config-server has no actuator, so the spec's probes would fail and every other service would wait forever. Fix: probes on /application/default.
+  3. vets-service needs the production profile, or its Caffeine cache never loads.
+  4. External Secrets API is now v1; the spec's v1beta1 would be rejected.
+- Startup waves: config-server -> discovery-server -> gateway/customers/vets/genai/admin -> visits (visits table has a foreign key to pets).
+- A8 NOTE: the ALB is created by the Load Balancer Controller, not Terraform. Delete the Ingress/apps BEFORE terraform destroy, or the ALB blocks VPC deletion.
+
+### 9. Build-day scripts (commit f366a71)
+- scripts/install-addons.sh: installs in order with pinned versions and waits for each: namespaces -> LB Controller 3.6.3 -> External Secrets 2.15.0 (+ ClusterSecretStore, ExternalSecret, tracing alias) -> Zipkin 3.6.1 -> kube-prometheus-stack 93.4.1 (no Alertmanager, no volumes, 1-day retention, Grafana password only in a K8s secret, Petclinic dashboard provisioned) -> ArgoCD v3.6.2 + root app. Waits for all 8 apps Synced + Healthy and prints the ALB URL.
+- scripts/teardown-addons.sh: deletes the apps and Ingress, waits until the ALB and target groups are really gone (aws elbv2), uninstalls the add-ons, reports anything left over.
+- scripts/port-forwards.sh: ArgoCD 8443, Eureka 8761, Spring Boot Admin 9090, Prometheus 9091, Grafana 3000, Zipkin 9411. Passwords go to the clipboard, never on screen.
+- Only 5 of 8 services expose /actuator/prometheus (config-server, discovery-server and admin-server lack the Prometheus metrics library). Explain in A6-3.
+- ArgoCD dex, notifications and applicationset scaled to 0 to save pods.
+- Raised JVM memory requests from 128Mi to 384Mi (real use ~300Mi) so the scheduler does not overpack nodes. ~62% of node memory requested on 5 nodes (commit 152e6f9).
+- Brought CLAUDE.md and .claude/rules (kubernetes.md, helm.md) in line with what was built, and removed a hardcoded example account ID from helm.md, so the security audit reviews against accurate rules (commits f294bc6, 5814724, 9855d06).
+
+### 10. Hook false positive #3
+- block-secret-commit.sh blocked a commit because the commit MESSAGE contained the word for the kube config file (it matches the word anywhere in the git command). Nothing secret was staged. Claude stopped and asked; I chose to reword the message.
+
+### 11. Security audit and fix (A3)
+- security-auditor subagent, read-only: 0 Critical, 3 High, 7 Medium, 10 Low, Overall Score 6.5/10.
+  - H-1: hooks don't really protect dev (guards only petclinic-prod; -chdir and -n bypasses; warn hook never blocks; fail open if jq missing).
+  - H-2: ArgoCD default project + auto-sync/prune/self-heal.
+  - H-3: every pod can reach RDS, apps use the master DB user, no NetworkPolicies.
+- Claude spot-checked the auditor before relaying and corrected 3 claims (M-6 partly wrong, L-6 wrong line numbers, L-1 ID was the template's example, not mine).
+- I chose to fix H-1: it enforces the core "human control" rule and can be proven with tests. H-2, H-3 and M-1..M-7 go to A9 Q6.
+- H-1 fix: new shared parser .claude/hooks/lib/command-parse.sh; destroy and apply -destroy blocked whatever flags come first; kubectl delete blocked in petclinic-dev and -prod in any flag order (also when no -n is given, and delete -f on petclinic manifests); terraform apply now ASKS me (permissionDecision); all hooks fail closed (exit 2) if jq is missing or the JSON is invalid; 15 permissions.deny rules as a second layer.
+- Verified with scripts/test-hooks.sh: 53 cases. Old hooks failed 35, new hooks pass 53/53.
+- rm hook false positive (rm -rf "$OLD" plus the text "scripts/"). Claude restructured the command instead of working around the hook.
+- Live proof: during the re-audit the new apply hook paused Claude and asked me before a command containing "terraform apply" (only test text inside a Python script, so I approved). Asking is the safe default.
+- Re-audit: H-1 partly resolved, score 6.5 -> 7.0/10. Commit f5d4acd. Confirmed: fail-closed, apply asks (incl. sudo / bash -c), dev+prod kubectl delete guards, valid deny rules, 53/53 tests.
+- Still bypassable (auditor-tested): shell keywords (if/then, for/do, !), indirection (\terraform, $(which terraform), T=terraform; $T destroy), find -exec / xargs / env -S, kubectl value flags (-v 5), alias k; slow parsing of very long commands (MED-008).
+- Claude corrected its own claim (it said the changes were uncommitted; they were committed) and refused to route around the hook when it blocked its own test.
+- LESSON: hooks only filter what Claude types. The real protection is IAM + Kubernetes RBAC (e.g. Claude's AWS identity has no rights to delete EKS/RDS).
+- A3 COMPLETE.
+
+### Production improvements added (A9 Q6)
+- block-secret-commit.sh should match only file paths being added, not the whole command (3 false positives).
+- HIGH-001 leftovers: shell keywords, indirection, find/xargs/env, kubectl value flags; add kubectl deny rules; cap input length.
+- H-2: ArgoCD AppProject limited to this repo and petclinic-dev, no cluster-scoped resources; branch protection on main.
+- H-3: VPC CNI NetworkPolicies (default deny + per-service allows) and a non-master DB user for the apps.
+- M-1: RDS require_secure_transport. M-2: KMS encryption for K8s secrets. M-5: read-only root filesystem + emptyDir /tmp, PSA restricted. M-6: pin images by digest, IMMUTABLE tags.
+
+### Screenshots added
+| File | Use |
+|---|---|
+| 02-A3-1a-audit-request-subagent.png | A3-1 (prompt + subagent) |
+| 02-A3-1b-audit-score-and-h1.png | A3-1 (6.5/10 + H-1) |
+| 02-A3-1c-audit-high-findings.png | A3-1 (H-2, H-3) |
+| 03-A3-2a-hook-tests-before-after.png | A3-2 (35 fail -> 53/53 pass) |
+| 03-A3-2b-reaudit-score.png | A3-2 (7.0/10) |
+| 03-A3-2c-remaining-bypasses.png | A3-2 (honest limits) |
+| extra-02-claude-memory-requests-384mi.png | Extra |
+| extra-03..05 audit medium/low/order | Extras |
+| extra-06-hook-asks-before-apply.png | Extra (live hook proof) |
+| extra-07-reaudit-next-steps.png | Extra |
+
+Required screenshots so far: 5 of 22 (02, 03, 06, 19, 20).
+
+### Commits (Day 2, platform repo)
+| Commit | What |
+|---|---|
+| 6cadf1e | Helm chart, values, ESO, ArgoCD apps |
+| f366a71 | Build-day scripts + spec drift |
+| 152e6f9 | 384Mi memory requests |
+| f294bc6, 5814724, 9855d06 | CLAUDE.md + rule files match the build |
+| f5d4acd | fix(H-1): hooks + test-hooks.sh |
+
+## Next (Fri 20 Nov, $0)
+- Pre-flight: EC2 vCPU quota for 5 x t4g.small, AWS plan check.
+- Architecture diagram (A2).
+- Draft A3 answers.
+- Saturday run-sheet (commands + screenshots in order).
