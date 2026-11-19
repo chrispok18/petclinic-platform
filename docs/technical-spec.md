@@ -242,10 +242,16 @@ IMDS hop limit 1 means pods cannot use the node IAM role (workloads use IRSA). C
 | Constraint | Per node | 5 nodes | Needed (dev) |
 |------------|----------|---------|--------------|
 | Max pods (3 ENIs × (4 IPs − 1) + 2) | 11 | 55 | — |
-| Slots after DaemonSets (aws-node, kube-proxy, node-exporter) | 8 | 40 | ~28 (8 apps, 2 CoreDNS, ~7 ArgoCD, 3 ESO, 2 LB Controller, ~5 Prometheus stack, 1 Zipkin) |
-| Allocatable memory (approx.) | ~1.45 GiB | ~7.2 GiB | ~5.7 GiB working set (~80%) |
+| Slots after DaemonSets (aws-node, kube-proxy, node-exporter) | 8 | 40 | 23 (8 apps, 2 CoreDNS, 1 LB Controller, 3 ESO, 1 Zipkin, 4 monitoring, 4 ArgoCD) |
+| Allocatable memory (approx.) | ~1.45 GiB | ~7.2 GiB | — |
+| Memory **requests** (what the scheduler sees) | — | — | ~4.5 GiB (~62%): 8 JVMs × 384Mi = 3.0 GiB + add-ons ~1.5 GiB |
+| Memory **working set** (expected) | — | — | ~5.0 GiB (~70%); worst case all JVMs at 512Mi ≈ 6.1 GiB (~85%) |
 
-Memory is the binding constraint: 4 nodes do not fit; raise `eks_node_desired_size` to 6 if pods are OOM-killed or Pending.
+Counts assume `scripts/install-addons.sh` (Alertmanager off; ArgoCD dex, notifications and applicationset scaled to 0).
+
+**JVM memory request = 384Mi in dev** (`helm-values/dev.yaml`, limit unchanged at 512Mi). With the original 128Mi request the scheduler believed a node could hold ~10 JVMs while each really uses ~250-350Mi, so pods could pile onto one node and hit MemoryPressure/OOM. At 384Mi, requests track real usage: at most 3 JVMs fit per node, so the 8 services spread over ≥3 nodes, and a rolling update still finds room for one surge pod (~2.7 GiB unrequested).
+
+Memory is the binding constraint: 4 nodes do not fit (~5.8 GiB allocatable < ~6.1 GiB worst case). Raise `eks_node_desired_size` to 6 if pods stay Pending (insufficient memory) or are OOM-killed.
 
 > **Cost note:** t4g.small instances (2 vCPU, 2 GiB) are eligible for the AWS Graviton free trial (750 hrs/month until Dec 2026). Both dev and prod use identical sizing — this is a cost optimization for a learning project. In production, you would use larger instances (e.g., m7g.xlarge). Students should understand this trade-off.
 
@@ -671,6 +677,8 @@ Actuator endpoints per service: discovery-server and admin-server have actuator 
 | admin-server | 100m | 500m | 128Mi | 512Mi |
 
 API Gateway gets higher CPU (200m/1000m) because it handles all incoming traffic routing. Memory requests are set to 128Mi (with 512Mi limit) to fit on t4g.small nodes (2 GiB RAM). Spring Boot services idle around 200-300 MiB — the 512Mi limit provides headroom for spikes.
+
+**Dev override:** `helm-values/dev.yaml` raises the memory request to **384Mi** for all 8 services (limit stays 512Mi, CPU unchanged) so scheduling matches real JVM usage. See [Dev Capacity](#dev-capacity-5--t4gsmall).
 
 ### Environment Variables per Service
 
