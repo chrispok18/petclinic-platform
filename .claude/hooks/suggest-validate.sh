@@ -6,14 +6,17 @@
 # How: Checks the edited file path and suggests the appropriate validation command.
 #      This is purely informational — exit 0 always (never blocks).
 
-set -euo pipefail
+set -Eeuo pipefail
+HOOK_NAME="suggest-validate"
+fail_closed() { echo "BLOCKED by $HOOK_NAME: $1 - failing closed." >&2; exit 2; }
+trap 'fail_closed "unexpected error at line $LINENO"' ERR
 
+command -v jq >/dev/null 2>&1 || fail_closed "jq is not installed (sudo apt install jq), so the input cannot be inspected"
 INPUT=$(cat)
-
 # Extract the file path from the tool input
 # For Write tool: .tool_input.file_path
 # For Edit tool: .tool_input.file_path
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(jq -r '.tool_input.file_path // empty' <<<"$INPUT" 2>/dev/null) || fail_closed "tool input is not valid JSON"
 
 if [ -z "$FILE_PATH" ]; then
   exit 0

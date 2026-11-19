@@ -1,4 +1,23 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(terraform destroy)",
+      "Bash(terraform destroy *)",
+      "Bash(terraform * destroy)",
+      "Bash(terraform * destroy *)",
+      "Bash(terraform *apply* -destroy*)",
+      "Bash(terragrunt destroy)",
+      "Bash(terragrunt destroy *)",
+      "Bash(terragrunt * destroy)",
+      "Bash(terragrunt * destroy *)",
+      "Bash(terragrunt *apply* -destroy*)",
+      "Bash(tofu destroy)",
+      "Bash(tofu destroy *)",
+      "Bash(tofu * destroy)",
+      "Bash(tofu * destroy *)",
+      "Bash(tofu *apply* -destroy*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

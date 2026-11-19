@@ -7,10 +7,14 @@
 # How: Checks if the command is a git add or git commit, then scans for
 #      secret-like filenames OR dangerous bulk-add patterns. Exits 2 to deny.
 
-set -euo pipefail
+set -Eeuo pipefail
+HOOK_NAME="block-secret-commit"
+fail_closed() { echo "BLOCKED by $HOOK_NAME: $1 - failing closed." >&2; exit 2; }
+trap 'fail_closed "unexpected error at line $LINENO"' ERR
 
+command -v jq >/dev/null 2>&1 || fail_closed "jq is not installed (sudo apt install jq), so the input cannot be inspected"
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+COMMAND=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null) || fail_closed "tool input is not valid JSON"
 
 if [ -z "$COMMAND" ]; then
   exit 0
