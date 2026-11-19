@@ -37,7 +37,7 @@ docs/                                # Architecture docs, runbooks, ADRs
 - **Namespaces:** `petclinic-dev`, `petclinic-prod` (one namespace per environment)
 - **Labels:** Every resource: `app.kubernetes.io/name`, `app.kubernetes.io/part-of=petclinic`, `app.kubernetes.io/managed-by=Helm`
 - **Probes:** Every Deployment MUST have readinessProbe and livenessProbe using `/actuator/health/{readiness,liveness}`
-- **Resources:** Every container MUST have requests and limits (memory: 128Mi request / 512Mi limit)
+- **Resources:** Every container MUST have requests and limits. JVM services: memory 512Mi limit; request 128Mi chart default, **384Mi in dev** (`helm-values/dev.yaml`, matches real JVM usage ~250-350Mi so the scheduler does not over-pack t4g.small nodes)
 - **Image tags:** Use commit SHA tags, never `latest` in production
 - **Secrets:** Use ExternalSecret CRs pointing to AWS Secrets Manager — never store secrets in YAML
 - **Service startup order:** Config Server → Discovery Server → all others (use init containers)

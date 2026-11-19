@@ -56,16 +56,18 @@ Every Deployment MUST include:
      periodSeconds: 15
    ```
 
-2. **Resource requests and limits**:
+2. **Resource requests and limits** (values as built; technical-spec: Resource Requests and Limits):
    ```yaml
    resources:
      requests:
-       memory: "128Mi"
-       cpu: "250m"
+       memory: "384Mi"   # dev (helm-values/dev.yaml); chart default 128Mi
+       cpu: "100m"       # api-gateway: 200m
      limits:
        memory: "512Mi"
-       cpu: "500m"
+       cpu: "500m"       # api-gateway: 1000m
    ```
+   The dev memory request is 384Mi for all 8 JVM services because they really use ~250-350Mi;
+   a 128Mi request lets the scheduler pack too many JVMs onto one 2 GiB t4g.small node.
 
 3. **Image with SHA tag** (never `latest`):
    ```yaml
