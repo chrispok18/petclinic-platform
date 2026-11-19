@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "petclinic.labels" . | nindent 4 }}
+    {{- if .Values.metrics.enabled }}
+    petclinic.io/metrics: "true"   # selected by the petclinic-services ServiceMonitor
+    {{- end }}
 spec:
   type: ClusterIP
   selector:

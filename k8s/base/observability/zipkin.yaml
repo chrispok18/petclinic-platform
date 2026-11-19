@@ -1,0 +1,120 @@
+# Zipkin (technical-spec: Observability > Zipkin). Dev: in-memory storage, single replica.
+# Contract with k8s/base/tracing-server.yaml: Service "zipkin" in namespace "tracing", port 9411.
+# The apps send to http://tracing-server:9411/api/v2/spans (config repo, docker profile); the
+# tracing-server ExternalName Service in petclinic-dev points at this Service.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tracing
+  labels:
+    app.kubernetes.io/name: tracing
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: infrastructure
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zipkin
+  namespace: tracing
+  labels:
+    app.kubernetes.io/name: zipkin
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: infrastructure
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zipkin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zipkin
+        app.kubernetes.io/part-of: petclinic
+        app.kubernetes.io/managed-by: kubectl
+        app.kubernetes.io/component: infrastructure
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        # The image's USER is the name "zipkin" (created by `adduser -D` on Alpine = UID 1000).
+        # A numeric UID is required, otherwise the kubelet cannot verify runAsNonRoot.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      containers:
+        - name: zipkin
+          image: openzipkin/zipkin:3.6.1   # multi-arch (amd64, arm64)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9411
+              protocol: TCP
+          env:
+            - name: STORAGE_TYPE
+              value: mem
+            - name: MEM_MAX_SPANS
+              value: "20000"   # keeps the in-memory store inside the small heap
+            - name: JAVA_OPTS
+              value: "-Xms128m -Xmx192m -XX:+ExitOnOutOfMemoryError"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zipkin
+  namespace: tracing
+  labels:
+    app.kubernetes.io/name: zipkin
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: infrastructure
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zipkin
+  ports:
+    - name: http
+      port: 9411
+      targetPort: http
+      protocol: TCP

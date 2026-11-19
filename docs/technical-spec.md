@@ -449,16 +449,20 @@ RDS credentials are created by the RDS module with `random_password` (16+ chars,
 
 | Parameter | Value |
 |-----------|-------|
-| Installation | kubectl apply (CRDs + controller) |
+| Installation | Helm chart `external-secrets` **v2.15.0** (CRDs included), via `scripts/install-addons.sh` |
 | Namespace | `external-secrets` |
+| ServiceAccount | `external-secrets-sa`, annotated `eks.amazonaws.com/role-arn: <petclinic-{env}-eso-role ARN>` |
 | Store Type | `ClusterSecretStore` |
 | Provider | AWS Secrets Manager |
 | Auth | IRSA (see [IRSA Roles](#irsa-roles)) |
+| API Version | **`external-secrets.io/v1`** — ESO v2.x serves only `v1`; `v1beta1` is deprecated and **not served** (manifests using it are rejected) |
 
 ### ClusterSecretStore Configuration
 
+`k8s/base/external-secrets/cluster-secret-store.yaml`:
+
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: aws-secrets-manager
@@ -476,20 +480,20 @@ spec:
 
 ### ExternalSecret Manifests
 
-**RDS Credentials** (`k8s/base/external-secrets/rds-credentials.yaml`):
+**RDS Credentials** (`k8s/base/external-secrets/rds-credentials.yaml`, `external-secrets.io/v1`):
+
+The source JSON already holds `host`, `port`, `dbname`, `username`, `password`, so the ExternalSecret extracts all keys and **templates** the three Spring variables into one Secret. The DB services load it with `envFrom`; no RDS endpoint is stored in Git or a ConfigMap.
 
 | Field | Value |
 |-------|-------|
-| `secretStoreRef.name` | `aws-secrets-manager` |
-| `secretStoreRef.kind` | `ClusterSecretStore` |
+| `secretStoreRef.name` / `.kind` | `aws-secrets-manager` / `ClusterSecretStore` |
 | `refreshInterval` | `1h` |
-| `target.name` | `rds-credentials` |
-| `data[0].secretKey` | `username` |
-| `data[0].remoteRef.key` | `petclinic/{env}/rds-credentials` |
-| `data[0].remoteRef.property` | `username` |
-| `data[1].secretKey` | `password` |
-| `data[1].remoteRef.key` | `petclinic/{env}/rds-credentials` |
-| `data[1].remoteRef.property` | `password` |
+| `dataFrom[0].extract.key` | `petclinic/{env}/rds-credentials` |
+| `target.name` | `rds-credentials` (namespace `petclinic-{env}`) |
+| `target.template.engineVersion` | `v2` |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://{{ .host }}:{{ .port }}/{{ .dbname }}?sslMode=REQUIRED` |
+| `SPRING_DATASOURCE_USERNAME` | `{{ .username }}` |
+| `SPRING_DATASOURCE_PASSWORD` | `{{ .password }}` |
 
 **OpenAI API Key** (`k8s/base/external-secrets/openai-api-key.yaml`) — **prod only; not deployed in dev** (no source secret exists):
 
@@ -573,7 +577,7 @@ All routing to backend services is handled by the API Gateway (Spring Cloud Gate
 |---------|---------|-------------|
 | `docker` | Changes Config Server URL from `localhost` to `config-server` (Docker DNS) | Set in Dockerfile: `SPRING_PROFILES_ACTIVE=docker` |
 | `mysql` | Switches from HSQLDB to MySQL | Added for RDS-backed services: `SPRING_PROFILES_ACTIVE=docker,mysql` |
-| `production` | Default active profile for vets-service and genai-service. **Required for vets-service Caffeine cache** — the `CacheConfig` class is gated on `@Profile("production")` so caching only works when this profile is active. | Set in application.yml |
+| `production` | Default active profile for vets-service and genai-service. **Required for vets-service Caffeine cache** — the `CacheConfig` class is gated on `@Profile("production")` so caching only works when this profile is active. | Set in application.yml — **but** the `SPRING_PROFILES_ACTIVE` env var (Dockerfile `docker`, or the Deployment) *replaces* `spring.profiles.active`, so on Kubernetes vets-service must run `SPRING_PROFILES_ACTIVE=docker,mysql,production`. genai-service has no `production`-gated beans and runs `docker`. |
 | `chaos-monkey` | Chaos engineering (latency, exceptions) | Optional, testing only |
 | `native` | Config Server uses local filesystem instead of Git repo | Config Server only, requires `GIT_REPO` env var |
 
@@ -641,7 +645,17 @@ app.kubernetes.io/component: "{server|service|gateway|admin}"
 | Readiness | `/actuator/health/readiness` | Service port | 10s | 5s | 3 |
 | Liveness | `/actuator/health/liveness` | Service port | 15s | 5s | 3 |
 
-The startupProbe runs first and disables readiness and liveness checks until Spring Boot has fully initialized. Once startup passes, readiness and liveness take over. Config Server uses `/actuator/health` for all three probes.
+The startupProbe runs first and disables readiness and liveness checks until Spring Boot has fully initialized. Once startup passes, readiness and liveness take over.
+
+**Config Server exception (forced by the app):** `spring-cloud-config-server` declares `spring-boot-starter-actuator` only as an *optional* dependency and the config-server POM does not add it, so `/actuator/*` does not exist (404). Upstream docker-compose health-checks `/` for the same reason.
+
+| Probe (config-server) | Check | Period | Failure Threshold |
+|-------|-------|--------|-------------------|
+| Startup | `GET /application/default` (200 once the Git config repo is cloned) | 10s | 30 |
+| Readiness | `GET /application/default` | 30s | 3 |
+| Liveness | TCP 8888 (a GitHub outage must not cause a restart loop) | 15s | 3 |
+
+Actuator endpoints per service: discovery-server and admin-server have actuator (health probes work) but **no** `micrometer-registry-prometheus`, so they expose no `/actuator/prometheus`. See [Prometheus](#prometheus).
 
 ### Resource Requests and Limits
 
@@ -664,16 +678,16 @@ API Gateway gets higher CPU (200m/1000m) because it handles all incoming traffic
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `SPRING_PROFILES_ACTIVE` | `docker` (non-DB) or `docker,mysql` (DB services) | Deployment spec |
+| `SPRING_PROFILES_ACTIVE` | `docker` (non-DB), `docker,mysql` (customers, visits), `docker,mysql,production` (vets — see [Spring Profiles](#spring-profiles)) | Deployment spec |
 | `CONFIG_SERVER_URL` | `http://config-server:8888` | ConfigMap |
 
 **DB services (customers, visits, vets) — additional:**
 
 | Variable | Value | Source |
 |----------|-------|--------|
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://{rds-endpoint}:3306/petclinic` | ConfigMap |
-| `SPRING_DATASOURCE_USERNAME` | From secret | K8s Secret (ESO) |
-| `SPRING_DATASOURCE_PASSWORD` | From secret | K8s Secret (ESO) |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://{host}:{port}/{dbname}?sslMode=REQUIRED` (templated by ESO) | Secret `rds-credentials` (ESO), `envFrom` |
+| `SPRING_DATASOURCE_USERNAME` | From secret | Secret `rds-credentials` (ESO), `envFrom` |
+| `SPRING_DATASOURCE_PASSWORD` | From secret | Secret `rds-credentials` (ESO), `envFrom` |
 
 **GenAI service — additional:**
 
@@ -683,13 +697,13 @@ API Gateway gets higher CPU (200m/1000m) because it handles all incoming traffic
 
 ### Init Containers (Startup Order Enforcement)
 
-Services that depend on Config Server use an init container that waits for Config Server to be healthy:
+Services that depend on Config Server use an init container that waits until Config Server can serve configuration (it has no actuator, see [Health Probes](#health-probes-all-services)):
 
 ```yaml
 initContainers:
   - name: wait-for-config-server
     image: busybox:1.36
-    command: ['sh', '-c', 'until wget -qO- http://config-server:8888/actuator/health; do sleep 5; done']
+    command: ['sh', '-c', 'until wget -q -T 5 -O /dev/null http://config-server:8888/application/default; do sleep 5; done']
 ```
 
 Services that depend on Discovery Server (all except Config Server) add a second init container:
@@ -697,8 +711,10 @@ Services that depend on Discovery Server (all except Config Server) add a second
 ```yaml
   - name: wait-for-discovery-server
     image: busybox:1.36
-    command: ['sh', '-c', 'until wget -qO- http://discovery-server:8761/actuator/health; do sleep 5; done']
+    command: ['sh', '-c', 'until wget -q -T 5 -O /dev/null http://discovery-server:8761/actuator/health; do sleep 5; done']
 ```
+
+visits-service adds a third wait for `http://customers-service:8081/actuator/health` (its `visits.pet_id` FK references the `pets` table created by customers-service). In Helm these are declared as `waitFor: [{name, url}]` in `helm-values/{service}.yaml`.
 
 ### SecurityContext (All Deployments)
 
@@ -883,31 +899,36 @@ git push
 | Namespace | `monitoring` | `monitoring` |
 | Scrape Interval | 15s | 15s |
 | Evaluation Interval | 15s | 15s |
-| Retention | 7 days | 15 days |
+| Retention | 1 day | 15 days |
 | Storage | `emptyDir` (no PV — ebs-csi not installed in dev) | PersistentVolume (EBS, 50Gi) |
+| Installation (dev) | Helm `kube-prometheus-stack` 93.4.1, values `k8s/base/observability/kube-prometheus-stack-values.yaml`, Alertmanager **off** | — |
 
 #### Scrape Targets
 
-| Job Name | Target | Metrics Path | Port |
-|----------|--------|-------------|------|
-| `config-server` | `config-server.petclinic-{env}:8888` | `/actuator/prometheus` | 8888 |
-| `discovery-server` | `discovery-server.petclinic-{env}:8761` | `/actuator/prometheus` | 8761 |
-| `api-gateway` | `api-gateway.petclinic-{env}:8080` | `/actuator/prometheus` | 8080 |
-| `customers-service` | `customers-service.petclinic-{env}:8081` | `/actuator/prometheus` | 8081 |
-| `visits-service` | `visits-service.petclinic-{env}:8082` | `/actuator/prometheus` | 8082 |
-| `vets-service` | `vets-service.petclinic-{env}:8083` | `/actuator/prometheus` | 8083 |
-| `genai-service` | `genai-service.petclinic-{env}:8084` | `/actuator/prometheus` | 8084 |
-| `admin-server` | `admin-server.petclinic-{env}:9090` | `/actuator/prometheus` | 9090 |
+Dev uses one ServiceMonitor (`petclinic-services`) that selects Services in `petclinic-{env}` labelled `petclinic.io/metrics: "true"` (set by `metrics.enabled` in `helm-values/{service}.yaml`), port `http`, path `/actuator/prometheus`.
+
+| Service | Port | `/actuator/prometheus` | Scraped |
+|---------|------|------------------------|---------|
+| `api-gateway` | 8080 | Yes | Yes |
+| `customers-service` | 8081 | Yes | Yes |
+| `visits-service` | 8082 | Yes | Yes |
+| `vets-service` | 8083 | Yes | Yes |
+| `genai-service` | 8084 | Yes | Yes |
+| `config-server` | 8888 | **No** — no actuator at all | No |
+| `discovery-server` | 8761 | **No** — actuator, but no `micrometer-registry-prometheus` | No |
+| `admin-server` | 9090 | **No** — actuator, but no `micrometer-registry-prometheus` | No |
+
+Scraping the last three would only produce permanently DOWN targets (404). Adding metrics there requires an app change (out of scope: the app repo is read-only).
 
 ### Grafana
 
 | Parameter | Value |
 |-----------|-------|
 | Namespace | `monitoring` |
-| Datasources | Prometheus (auto-configured), Loki (auto-configured) |
+| Datasources | Prometheus (auto-configured, name `Prometheus`); Loki in prod only (skipped in dev) |
 | Storage | Dev: `emptyDir` (no PV); Prod: PersistentVolume (EBS, 5Gi) |
-| Admin Credentials | K8s Secret |
-| Dashboards | Provisioned via ConfigMap |
+| Admin Credentials | K8s Secret `grafana-admin` in `monitoring`, password generated by `scripts/install-addons.sh` on first run (never in Git, never printed) |
+| Dashboards | Provisioned via ConfigMap + Grafana dashboard sidecar (label `grafana_dashboard: "1"`). Dev adds the app repo's **Spring Petclinic Metrics** dashboard (`docker/grafana/dashboards/grafana-petclinic-dashboard.json`, copied to `k8s/base/observability/dashboards/`) |
 
 #### Dashboard Set
 
@@ -970,8 +991,21 @@ Loki receives logs from FluentBit and exposes them as a Grafana datasource. Log-
 |-----------|-------|
 | Namespace | `tracing` |
 | Port | 9411 |
-| Image | `openzipkin/zipkin` |
-| Services send traces via | OpenTelemetry exporter (configured in Spring Cloud Config) |
+| Image | `openzipkin/zipkin:3.6.1` (multi-arch, arm64) |
+| Storage (dev) | In-memory (`STORAGE_TYPE=mem`), traces lost on restart |
+| Manifest (dev) | `k8s/base/observability/zipkin.yaml` (Deployment + Service `zipkin`) |
+| Services send traces via | Micrometer Tracing → Zipkin exporter, endpoint from Spring Cloud Config (docker profile) |
+| Services that send traces | api-gateway, customers, visits, vets, genai (config-, discovery- and admin-server have no tracing dependency) |
+
+#### Tracing Hostname (`tracing-server`)
+
+The shared config (`spring-petclinic-microservices-config/application.yml`, `docker` profile) sets:
+
+```yaml
+management.tracing.export.zipkin.endpoint: http://tracing-server:9411/api/v2/spans
+```
+
+`tracing-server` is a short DNS name, so it resolves in the **caller's** namespace (`petclinic-{env}`), not in `tracing`. `k8s/base/tracing-server.yaml` adds an `ExternalName` Service `tracing-server` in `petclinic-{env}` → `zipkin.tracing.svc.cluster.local`. Without it, no trace ever reaches Zipkin. Contract: the Zipkin Service must be named `zipkin`, namespace `tracing`, port 9411.
 
 ---
 

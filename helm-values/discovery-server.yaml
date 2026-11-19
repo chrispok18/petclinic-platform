@@ -10,6 +10,9 @@ image:
 service:
   port: 8761
 
+metrics:
+  enabled: false  # no micrometer-registry-prometheus in this service's pom: /actuator/prometheus is 404
+
 springProfiles: docker
 
 waitFor:

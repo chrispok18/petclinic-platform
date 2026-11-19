@@ -9,6 +9,9 @@ image:
 service:
   port: 8080
 
+metrics:
+  enabled: true   # has micrometer-registry-prometheus -> /actuator/prometheus
+
 springProfiles: docker
 
 waitFor:

@@ -19,6 +19,11 @@ image:
 service:
   port: 8080                   # overridden per service; container and Service use the same port
 
+# true only for services that ship micrometer-registry-prometheus (/actuator/prometheus exists).
+# Adds the Service label petclinic.io/metrics=true that the Prometheus ServiceMonitor selects.
+metrics:
+  enabled: false
+
 # SPRING_PROFILES_ACTIVE. Replaces the image default (docker) and the app's own spring.profiles.active.
 springProfiles: docker
 

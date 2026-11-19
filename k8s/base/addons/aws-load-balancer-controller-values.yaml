@@ -1,0 +1,21 @@
+# AWS Load Balancer Controller chart 3.6.3 (app v3.6.3, same version as the IAM policy in
+# terraform/policies/). Static dev values; clusterName, region, vpcId and the IRSA role ARN are passed
+# with --set by scripts/install-addons.sh from terraform outputs.
+#
+# region and vpcId MUST be set: the node launch template uses IMDS hop limit 1, so the controller pod
+# cannot discover them from instance metadata.
+replicaCount: 1                 # dev: one replica is enough (saves a pod slot and ~60Mi)
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller   # must match the IRSA trust (kube-system/aws-load-balancer-controller)
+
+# Only Ingress is used. Do not mutate Service type=LoadBalancer objects into NLBs.
+enableServiceMutatorWebhook: false
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
