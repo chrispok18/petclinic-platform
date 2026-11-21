@@ -3,7 +3,7 @@
 # Approved deviations from the spec:
 #   - kubernetes_version: newest version in STANDARD support (spec says 1.29, which is extended support).
 #   - AMI: AL2023_ARM_64_STANDARD (AL2 is not published for new Kubernetes versions).
-#   - Node group sizing min 2 / max 8 / desired 5 (variables).
+#   - Node group sizing set per environment (dev: 2x t4g.large, min 2 / max 2, vCPU quota).
 #   - aws-ebs-csi-driver skipped: Prometheus/Grafana run without PersistentVolumes.
 #
 # Node security groups, IMPORTANT:

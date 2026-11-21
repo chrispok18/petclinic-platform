@@ -9,7 +9,7 @@ replicaCount: 1
 
 # JVM memory request raised from the chart default 128Mi to 384Mi (limit stays 512Mi) for all 8
 # services. Spring Boot services really use ~250-350Mi; a 128Mi request let the scheduler pack too
-# many JVMs on one 2 GiB t4g.small. 384Mi = at most 3 JVMs per node by requests.
+# many JVMs on one node. 384Mi makes requests track real usage (dev nodes: 2x t4g.large, 8 GiB each).
 # Helm deep-merges this map, so per-service CPU values (api-gateway 200m/1000m) are kept.
 resources:
   requests:

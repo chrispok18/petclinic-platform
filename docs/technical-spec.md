@@ -212,12 +212,12 @@ Created from EKS cluster identity issuer URL. Required for IRSA (IAM Roles for S
 | Parameter | Dev | Prod |
 |-----------|-----|------|
 | Node Group Name | `petclinic-dev-nodes` | `petclinic-prod-nodes` |
-| Instance Types | `["t4g.small"]` | `["t4g.small"]` |
+| Instance Types | `["t4g.large"]` (vCPU quota, see Dev Capacity) | `["t4g.small"]` |
 | Architecture | ARM64 (Graviton) | ARM64 (Graviton) |
-| Capacity Type | `ON_DEMAND` (free trial until Dec 2026) | `ON_DEMAND` (free trial until Dec 2026) |
+| Capacity Type | `ON_DEMAND` (t4g.large is not in the Graviton free trial) | `ON_DEMAND` (free trial until Dec 2026) |
 | Min Size | 2 | 2 |
-| Max Size | 8 | 4 |
-| Desired Size | 5 (variable `eks_node_desired_size`) | 2 |
+| Max Size | 2 (must not exceed 2: vCPU quota) | 4 |
+| Desired Size | 2 (variable `eks_node_desired_size`, validated == 2) | 2 |
 | Disk Size | 20 GB (gp3, encrypted, set in launch template) | 20 GB |
 | AMI Type | `AL2023_ARM_64_STANDARD` (AL2 is not published for new K8s versions) | `AL2_ARM_64` |
 | Launch Template | Yes — attaches both SGs (see below), encrypted root volume, IMDSv2 with hop limit 1 | — |
@@ -237,23 +237,28 @@ The VPC CNI assigns pod IPs from secondary ENIs that inherit the primary ENI's S
 
 IMDS hop limit 1 means pods cannot use the node IAM role (workloads use IRSA). Consequence: the AWS Load Balancer Controller Helm values must set `vpcId` and `region` explicitly.
 
-#### Dev Capacity (5 × t4g.small)
+#### Dev Capacity (2 × t4g.large)
 
-| Constraint | Per node | 5 nodes | Needed (dev) |
+**Why t4g.large × 2:** the account's EC2 *Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances* vCPU quota in eu-central-1 is **5**. 5 × t4g.small = 10 vCPU cannot start; 2 × t4g.large = 4 vCPU fits. Max size stays **2** — a third node (6 vCPU) would exceed the quota. Raise the quota via Service Quotas (code `L-1216C47A`) before ever increasing max size.
+
+| Constraint | Per node | 2 nodes | Needed (dev) |
 |------------|----------|---------|--------------|
-| Max pods (3 ENIs × (4 IPs − 1) + 2) | 11 | 55 | — |
-| Slots after DaemonSets (aws-node, kube-proxy, node-exporter) | 8 | 40 | 23 (8 apps, 2 CoreDNS, 1 LB Controller, 3 ESO, 1 Zipkin, 4 monitoring, 4 ArgoCD) |
-| Allocatable memory (approx.) | ~1.45 GiB | ~7.2 GiB | — |
-| Memory **requests** (what the scheduler sees) | — | — | ~4.5 GiB (~62%): 8 JVMs × 384Mi = 3.0 GiB + add-ons ~1.5 GiB |
-| Memory **working set** (expected) | — | — | ~5.0 GiB (~70%); worst case all JVMs at 512Mi ≈ 6.1 GiB (~85%) |
+| vCPU | 2 | 4 (quota 5) | — |
+| Max pods (3 ENIs × (12 IPs − 1) + 2) | 35 | 70 | — |
+| Slots after DaemonSets (aws-node, kube-proxy, node-exporter) | 32 | 64 | 23 (8 apps, 2 CoreDNS, 1 LB Controller, 3 ESO, 1 Zipkin, 4 monitoring, 4 ArgoCD) |
+| Allocatable memory (approx., 8 GiB − kube-reserved 640Mi − eviction 100Mi − OS) | ~7.0 GiB | ~14 GiB | — |
+| Memory **requests** (what the scheduler sees) | — | — | ~4.5 GiB (~32%): 8 JVMs × 384Mi = 3.0 GiB + add-ons ~1.5 GiB |
+| Memory **working set** (expected) | — | — | ~5.0 GiB (~36%); worst case all JVMs at 512Mi ≈ 6.1 GiB (~44%) |
 
 Counts assume `scripts/install-addons.sh` (Alertmanager off; ArgoCD dex, notifications and applicationset scaled to 0).
 
-**JVM memory request = 384Mi in dev** (`helm-values/dev.yaml`, limit unchanged at 512Mi). With the original 128Mi request the scheduler believed a node could hold ~10 JVMs while each really uses ~250-350Mi, so pods could pile onto one node and hit MemoryPressure/OOM. At 384Mi, requests track real usage: at most 3 JVMs fit per node, so the 8 services spread over ≥3 nodes, and a rolling update still finds room for one surge pod (~2.7 GiB unrequested).
+**JVM memory request = 384Mi in dev** (`helm-values/dev.yaml`, limit unchanged at 512Mi). With the original 128Mi request the scheduler would under-count each JVM (real usage ~250-350Mi) and could pile pods onto one node. At 384Mi, requests track real usage, so the scheduler spreads the 8 services across both nodes and a rolling update has ample room for surge pods.
 
-Memory is the binding constraint: 4 nodes do not fit (~5.8 GiB allocatable < ~6.1 GiB worst case). Raise `eks_node_desired_size` to 6 if pods stay Pending (insufficient memory) or are OOM-killed.
+Memory is no longer the binding constraint — vCPU **quota** is. Even with one node down, the survivor (~7.0 GiB) still holds all requests (~4.5 GiB), though the worst-case working set (~6.1 GiB) would be tight. CPU requests must fit in ~3.8 allocatable vCPU across both nodes.
 
-> **Cost note:** t4g.small instances (2 vCPU, 2 GiB) are eligible for the AWS Graviton free trial (750 hrs/month until Dec 2026). Both dev and prod use identical sizing — this is a cost optimization for a learning project. In production, you would use larger instances (e.g., m7g.xlarge). Students should understand this trade-off.
+> **Quota caveat (node updates):** EKS managed node group updates (AMI/Kubernetes version, launch template changes) surge by launching replacement nodes before draining old ones. A surge node takes the group to 6 vCPU, over the quota of 5, so the update will stall/fail. Before any node group update, either raise the quota or scale to 1 node first. Replacing the node group itself (e.g. changing instance type) has the same problem if old and new nodes run at the same time.
+
+> **Cost note:** t4g.small instances (2 vCPU, 2 GiB) are eligible for the AWS Graviton free trial (750 hrs/month until Dec 2026); t4g.large (dev) is **not** and is billed On-Demand. Dev moved to 2 × t4g.large only because of the 5-vCPU quota — this is a cost/quota trade-off for a learning project. In production, you would use larger instances (e.g., m7g.xlarge). Students should understand this trade-off.
 
 ### Node IAM Role Policies
 
@@ -678,7 +683,7 @@ Actuator endpoints per service: discovery-server and admin-server have actuator 
 
 API Gateway gets higher CPU (200m/1000m) because it handles all incoming traffic routing. Memory requests are set to 128Mi (with 512Mi limit) to fit on t4g.small nodes (2 GiB RAM). Spring Boot services idle around 200-300 MiB — the 512Mi limit provides headroom for spikes.
 
-**Dev override:** `helm-values/dev.yaml` raises the memory request to **384Mi** for all 8 services (limit stays 512Mi, CPU unchanged) so scheduling matches real JVM usage. See [Dev Capacity](#dev-capacity-5--t4gsmall).
+**Dev override:** `helm-values/dev.yaml` raises the memory request to **384Mi** for all 8 services (limit stays 512Mi, CPU unchanged) so scheduling matches real JVM usage. See [Dev Capacity](#dev-capacity-2--t4glarge).
 
 ### Environment Variables per Service
 
@@ -1095,7 +1100,7 @@ This is a learning project. Instance choices maximize AWS free tier eligibility.
 | Resource | Dev (~) | Prod (~) | Free Tier |
 |----------|---------|----------|-----------|
 | EKS Control Plane | $73 | $73 | None — unavoidable cost |
-| EC2 Nodes (dev 5x / prod 2x t4g.small) | ~$56 | $0 | Graviton free trial (750 hrs/mo until Dec 2026) covers ~1 node; dev also pays ~$0.005/hr per node public IPv4 and gp3 root volumes |
+| EC2 Nodes (dev 2x t4g.large / prod 2x t4g.small) | ~$115 | $0 | Graviton free trial covers t4g.small only, so dev's t4g.large is fully billed (~$0.077/hr each, approx. — re-check pricing); dev also pays ~$0.005/hr per node public IPv4 and gp3 root volumes |
 | RDS MySQL (db.t4g.micro) | $0 | $0 | RDS free tier (750 hrs/mo, 12 months) |
 | ALB | $0 | $0 | Free tier (750 hrs/mo, 12 months) |
 | S3 + DynamoDB (state) | $1 | $1 | Mostly free tier |

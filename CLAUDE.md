@@ -37,7 +37,7 @@ docs/                                # Architecture docs, runbooks, ADRs
 - **Namespaces:** `petclinic-dev`, `petclinic-prod` (one namespace per environment)
 - **Labels:** Every resource: `app.kubernetes.io/name`, `app.kubernetes.io/part-of=petclinic`, `app.kubernetes.io/managed-by=Helm`
 - **Probes:** Every Deployment MUST have readinessProbe and livenessProbe using `/actuator/health/{readiness,liveness}`
-- **Resources:** Every container MUST have requests and limits. JVM services: memory 512Mi limit; request 128Mi chart default, **384Mi in dev** (`helm-values/dev.yaml`, matches real JVM usage ~250-350Mi so the scheduler does not over-pack t4g.small nodes)
+- **Resources:** Every container MUST have requests and limits. JVM services: memory 512Mi limit; request 128Mi chart default, **384Mi in dev** (`helm-values/dev.yaml`, matches real JVM usage ~250-350Mi so the scheduler places pods by real usage on the t4g.large nodes)
 - **Image tags:** Use commit SHA tags, never `latest` in production
 - **Secrets:** Use ExternalSecret CRs pointing to AWS Secrets Manager — never store secrets in YAML
 - **Service startup order:** Config Server → Discovery Server → all others (use init containers)
@@ -80,7 +80,7 @@ docs/                                # Architecture docs, runbooks, ADRs
 | State key | petclinic/dev/terraform.tfstate | petclinic/prod/terraform.tfstate |
 | RDS instance | db.t4g.micro, single-AZ (free tier) | db.t4g.micro, single-AZ (free tier) |
 | EKS version | 1.37, upgrade policy STANDARD (never extended support) | 1.29 (re-check before prod build) |
-| EKS nodes | t4g.small ARM, AL2023_ARM_64_STANDARD, min 2 / max 8 / desired 5; launch template attaches EKS primary SG + node SG (Graviton free trial) | 2x t4g.small ARM (Graviton free trial) |
+| EKS nodes | t4g.large ARM (2 vCPU, 8 GiB, 35 max pods/node), AL2023_ARM_64_STANDARD, min 2 / max 2 / desired 2; launch template attaches EKS primary SG + node SG. Why: account On-Demand Standard vCPU quota in eu-central-1 is 5 — 2x large = 4 vCPU fits, 5x small (10) or a 3rd node (6) does not. Not covered by the Graviton free trial (t4g.small only) | 2x t4g.small ARM (Graviton free trial) |
 | Deploy mode | ArgoCD auto-sync | ArgoCD manual sync |
 | Replicas | 1 per service | 2+ per service, HPA |
 

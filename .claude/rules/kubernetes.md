@@ -74,7 +74,7 @@ Every Deployment MUST include:
        cpu: "500m"       # api-gateway: 1000m
    ```
    The dev memory request is 384Mi for all 8 JVM services because they really use ~250-350Mi;
-   a 128Mi request lets the scheduler pack too many JVMs onto one 2 GiB t4g.small node.
+   a 128Mi request lets the scheduler pack too many JVMs onto one node (dev: 2x t4g.large).
    Init containers and add-ons also need requests and limits (init: 10m/16Mi → 50m/32Mi).
 
 3. **Image with commit-SHA tag** (never `latest`; the chart fails to render on `latest` or empty):

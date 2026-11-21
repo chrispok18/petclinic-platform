@@ -83,10 +83,12 @@ module "eks" {
   cluster_security_group_id = module.vpc.eks_cluster_security_group_id
   node_security_group_id    = module.vpc.eks_node_security_group_id
 
-  node_ami_type       = "AL2023_ARM_64_STANDARD"
-  node_instance_types = ["t4g.small"]
+  node_ami_type = "AL2023_ARM_64_STANDARD"
+  # t4g.large x2 = 4 vCPU: fits the account's 5-vCPU On-Demand Standard quota in
+  # eu-central-1. max stays 2 so the group never needs a third node (6 vCPU).
+  node_instance_types = ["t4g.large"]
   node_min_size       = 2
-  node_max_size       = 8
+  node_max_size       = 2
   node_desired_size   = var.eks_node_desired_size
 
   addon_versions = local.eks_addon_versions
